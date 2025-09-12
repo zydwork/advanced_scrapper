@@ -12,8 +12,13 @@ import numpy as np
 
 import re
 
+
 # Function to check if the date of the article is within the start and end date of a CEO or board member
 def is_within_period(article_date, start_date, end_date):
+    # 如果文章日期为None，返回False（无法确定是否在期间内）
+    if article_date is None:
+        return False
+
     # Convert all datetimes to aware datetimes in UTC for comparison
     if article_date and article_date.tzinfo is None:
         article_date = article_date.replace(tzinfo=tzutc())
@@ -63,7 +68,7 @@ def extract_time_periods(names):
 def process_json_data(json_data):
     result = {}
     for company in json_data:
-        if (len(json_data) >= 2 and 'United States of America' in company['country']) or len(json_data)<=1:
+        if (len(json_data) >= 2 and 'United States' in company['country']) or len(json_data)<=1:
             ticker = company['ticker']
             print(ticker)
             # Extract time periods for CEOs and board members
@@ -88,10 +93,30 @@ def read_and_process_json_files(folder_path):
     for filename in os.listdir(folder_path):
         if filename.endswith('.json'):
             file_path = os.path.join(folder_path, filename)
-            with open(file_path, 'r') as file:
-                json_data = json.load(file)
-                processed_data = process_json_data(json_data)
-                all_processed_data.update(processed_data)
+            try:
+                # 明确指定UTF-8编码
+                with open(file_path, 'r', encoding='utf-8') as file:
+                    json_data = json.load(file)
+                    processed_data = process_json_data(json_data)
+                    all_processed_data.update(processed_data)
+            except UnicodeDecodeError:
+                # 如果UTF-8失败，尝试其他常见编码
+                print(f"UTF-8解码失败，尝试其他编码读取文件: {filename}")
+                try:
+                    with open(file_path, 'r', encoding='gbk') as file:
+                        json_data = json.load(file)
+                        processed_data = process_json_data(json_data)
+                        all_processed_data.update(processed_data)
+                except UnicodeDecodeError:
+                    try:
+                        with open(file_path, 'r', encoding='latin1') as file:
+                            json_data = json.load(file)
+                            processed_data = process_json_data(json_data)
+                            all_processed_data.update(processed_data)
+                    except Exception as e:
+                        print(f"无法读取文件 {filename}: {e}")
+            except Exception as e:
+                print(f"处理文件 {filename} 时出错: {e}")
     return all_processed_data
 
 # # Read and process JSON files
@@ -124,7 +149,7 @@ def process_chunk(source_name, chunk, processed_data):
     for index, row in tqdm(chunk.iterrows(), total=chunk.shape[0], desc="Processing"):
         article_text = str(row['article_text']) if row['article_text'] else ""
         title = str(row['title']) if row['title'] else ""
-        article_date = parser.parse(row['date_time']) if row['date_time'] else None
+        article_date = parser.parse(str(row['date_time'])) if pd.notna(row['date_time']) else None
         ticker_matches = {}  # Dictionary to hold all matches for this article
 
         def find_positions(pattern, text):
@@ -191,32 +216,30 @@ def sort_matched_csv(file_path):
     except Exception as e:
         print(f"Error processing {file_path}: {str(e)}")
 
+
 if __name__ == '__main__':
-    # Read and process JSON files
+    # 读取并处理 JSON 文件
     source_name = 'yahoo'
-    folder_path = 'info/ticker'
+    folder_path = 'info/Icahn_filter'
     processed_data = read_and_process_json_files(folder_path)
 
-    # Read the news CSV file
-    news_df = pd.read_csv(f'~/datasets/yahoo_articles_all_20250605.csv')
+    # 分块读取 CSV（防止内存爆）
+    chunksize = 20000  # 每次处理 5 万行
     os.makedirs(f'{source_name}_ticker_matched_articles', exist_ok=True)
 
-    # Determine the number of processes and split the DataFrame into chunks
-    num_processes = mp.cpu_count()
-    chunks = np.array_split(news_df, num_processes)
+    for chunk in pd.read_csv('datasets/yahoo_articles_all_20250605.csv', chunksize=chunksize):
+        num_processes = mp.cpu_count()
+        sub_chunks = np.array_split(chunk, num_processes)
 
+        with mp.Pool(processes=num_processes) as pool:
+            list(tqdm(
+                pool.starmap(process_chunk, [(source_name, sub_chunk, processed_data) for sub_chunk in sub_chunks]),
+                total=len(sub_chunks)
+            ))
 
-    # Create a pool of processes
-    pool = mp.Pool(processes=num_processes)
+    print("All matched CSV files have been processed.")
 
-    with mp.Pool(processes=num_processes) as pool:
-        # Use starmap to pass multiple arguments to the function being called
-        results = list(tqdm(pool.starmap(process_chunk, [(source_name, chunk, processed_data) for chunk in chunks]), total=len(chunks)))
-    # Close the pool and wait for the work to finish
-    pool.close()
-    pool.join()
-
-    # Sort each matched CSV file
+    # 按时间排序每个结果文件
     for file in os.listdir(f"{source_name}_ticker_matched_articles"):
         sort_matched_csv(f"{source_name}_ticker_matched_articles/{file}")
 
@@ -279,5 +302,4 @@ if __name__ == '__main__':
 #                     for name in names:
 #                         if fuzz.partial_ratio(article_text, name) > 95:  # Assuming a threshold score of 70
 #                             append_to_csv(ticker, name, row)
-
 

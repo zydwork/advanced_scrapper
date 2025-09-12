@@ -15,3 +15,8 @@ The currently available program is `constant_rate_scrapper.py`
 `ticker_symbol_query` is used to get the information for each ticker (company name, products, key people etc), which can be further matched with news. Note: consider using VPN to use an American IP if error. 
 
 `match_keywords.py` match the information from Wikidata to get the according news for each ticker. To use this dataset, you can download the premade dataset there from my [HuggingFace](https://huggingface.co/datasets/edaschau/financial_news)
+
+
+
+![image-20250824023529789](./README.png)
+
